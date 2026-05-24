@@ -21,6 +21,7 @@ from liger_kernel.ops.utils import calculate_settings
 from liger_kernel.ops.utils import compare_version
 from liger_kernel.ops.utils import ensure_contiguous
 from liger_kernel.ops.utils import get_npu_core_count
+from liger_kernel.ops.utils import is_hip
 from liger_kernel.ops.utils import set_large_grf_mode
 from liger_kernel.ops.utils import torch_to_triton_dtype
 from liger_kernel.utils import is_npu_available
@@ -419,6 +420,12 @@ def rms_norm_forward(X, W, eps, offset, casting_mode, row_mode):
     n_rows, n_cols = X.shape
     BLOCK_SIZE, num_warps = calculate_settings(n_cols)
 
+    # On AMD MI300/MI350 series (gfx950), occupancy is better with fewer warps for large
+    # block sizes, because each warp maps to a 64-thread wavefront and register pressure
+    # is lower when each thread processes more elements sequentially.
+    if is_hip() and BLOCK_SIZE >= 8192:
+        num_warps = min(num_warps, 4)
+
     Y = torch.empty((n_rows, n_cols), dtype=X.dtype, device=X.device)
     # RSTD is to cache rstd for each row
     # RSTD is always computed/stored in fp32 if we are using Llama or Gemma casting mode
@@ -609,7 +616,8 @@ class LigerRMSNormFunction(torch.autograd.Function):
         X: (B, T, H) or (BxT, H)
         W: (H,)
         """
-        if isinstance(X, torch.distributed.tensor.DTensor):
+        distributed_tensor = getattr(getattr(torch, "distributed", None), "tensor", None)
+        if distributed_tensor is not None and isinstance(X, distributed_tensor.DTensor):
             # Input tensor is output of a tensor parallel module and
             # needs to be gathered to a local tensor to compute
             # RMSE layer norm on each TP worker.
@@ -642,7 +650,8 @@ class LigerRMSNormFunction(torch.autograd.Function):
             X, RSTD = ctx.saved_tensors
             W = None
 
-        if isinstance(dY, torch.distributed.tensor.DTensor):
+        distributed_tensor = getattr(getattr(torch, "distributed", None), "tensor", None)
+        if distributed_tensor is not None and isinstance(dY, distributed_tensor.DTensor):
             # Gradients are output of a tensor parallel module and
             # needs to be gathered to a local tensor for computing RMSE layer.
             # TODO: support CP.
