@@ -2,6 +2,8 @@ import torch
 import triton
 import triton.language as tl
 
+from liger_kernel.ops.utils import is_hip
+
 
 @triton.jit
 def _triton_rope(
@@ -154,6 +156,8 @@ def rope_forward(q, k, cos, sin):
         pad_hd,
         BLOCK_SIZE=BLOCK_SIZE,
         BACKWARD_PASS=False,
+        num_warps=1 if is_hip() else 4,
+        num_stages=2 if is_hip() else 1,
     )
     return q.transpose(1, 2), k.transpose(1, 2), cos, sin
 
@@ -197,6 +201,8 @@ def rope_backward(dq, dk, cos, sin):
         pad_hd,
         BLOCK_SIZE=BLOCK_SIZE,
         BACKWARD_PASS=True,
+        num_warps=1 if is_hip() else 4,
+        num_stages=2 if is_hip() else 1,
     )
     return dq.transpose(1, 2), dk.transpose(1, 2)
 
