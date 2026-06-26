@@ -2,6 +2,15 @@ import torch
 import triton
 import triton.language as tl
 
+# DTensor is accessed as ``torch.distributed.tensor.DTensor`` below. On modern
+# PyTorch (>=2.6) the ``torch.distributed.tensor`` submodule is not
+# auto-imported, so accessing it raises AttributeError. Import it eagerly so
+# the regular (non-DTensor) fast path works on AMD/ROCm as well as NVIDIA.
+try:
+    import torch.distributed.tensor  # noqa: F401
+except ImportError:
+    pass
+
 from liger_kernel.ops.utils import calculate_settings
 from liger_kernel.ops.utils import ensure_contiguous
 
