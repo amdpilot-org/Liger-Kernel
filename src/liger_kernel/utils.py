@@ -65,6 +65,46 @@ def is_npu_available() -> bool:
         return False
 
 
+def get_device_arch() -> str:
+    """Return the current GPU architecture (GCN name) when running on HIP/ROCm, ``default`` otherwise.
+
+    This dispatches between gfx942 (MI300X) and gfx950 (MI325X/MI355X) tuned arms
+    (or ``default`` otherwise). It caches the result so it is cheap to call.
+
+    Returns one of:
+        ``"gfx942"``  -- AMD Instinct MI300X accelerator (gfx942)
+        ``"gfx950"``  -- AMD Instinct MI325X/MI355X accelerator (gfx950)
+        ``"gfx9XX"``  -- Other recent AMD gfx architectures (gfx1100, gfx1150, ...)
+        ``"default"`` -- Anything else (CPU-only torch, NVIDIA CUDA, Ascend NPU, etc.)
+    """
+    global _DEVICE_ARCH_CACHE
+    if _DEVICE_ARCH_CACHE is not None:
+        return _DEVICE_ARCH_CACHE
+
+    _DEVICE_ARCH_CACHE = "default"
+    try:
+        if torch.cuda.is_available() and getattr(torch.version, "hip", None) is not None:
+            try:
+                props = torch.cuda.get_device_properties(0)
+                gcn = getattr(props, "gcnArchName", "") or ""
+                major = getattr(props, "major", None)
+                minor = getattr(props, "minor", None)
+                if "gfx950" in gcn:
+                    _DEVICE_ARCH_CACHE = "gfx950"
+                elif "gfx942" in gcn or (major == 9 and minor == 4):
+                    _DEVICE_ARCH_CACHE = "gfx942"
+                elif "gfx9" in gcn[:4]:
+                    _DEVICE_ARCH_CACHE = "gfx9XX"
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return _DEVICE_ARCH_CACHE
+
+
+_DEVICE_ARCH_CACHE = None
+
+
 def transformers_version_dispatch(
     required_version: str,
     before_fn,

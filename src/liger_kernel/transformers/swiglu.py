@@ -2,7 +2,23 @@ import torch
 import torch.nn as nn
 
 from liger_kernel.ops import LigerFusedMoEFunction
-from liger_kernel.ops import LigerSiLUMulFunction
+from liger_kernel.utils import get_device_arch
+
+if get_device_arch() == "gfx942":
+    from liger_kernel.transformers.amd.swiglu import (
+        LigerSiLUMulFunctionAMD as _LigerSiLUMulFunction,
+        swiglu_forward_amd as _swiglu_forward_amd,
+    )
+else:
+    from liger_kernel.ops import LigerSiLUMulFunction as _LigerSiLUMulFunction
+    _swiglu_forward_amd = None
+
+
+def _swiglu_dispatch(a, b, gate_multiplier=1.0, down_multiplier=1.0):
+    """Dispatch to direct AMD kernel for inference, or autograd Function for training."""
+    if _swiglu_forward_amd is not None and not torch.is_grad_enabled() and gate_multiplier == 1.0 and down_multiplier == 1.0:
+        return _swiglu_forward_amd(a, b)
+    return _LigerSiLUMulFunction.apply(a, b, gate_multiplier, down_multiplier)
 
 
 class LigerSwiGLUMLP(nn.Module):
@@ -18,7 +34,7 @@ class LigerSwiGLUMLP(nn.Module):
             raise ValueError(f"Activation function {config.hidden_act} not supported.")
 
     def forward(self, x):
-        return self.down_proj(LigerSiLUMulFunction.apply(self.gate_proj(x), self.up_proj(x)))
+        return self.down_proj(_swiglu_dispatch(self.gate_proj(x), self.up_proj(x)))
 
 
 class LigerBlockSparseTop2MLP(nn.Module):
@@ -35,7 +51,7 @@ class LigerBlockSparseTop2MLP(nn.Module):
             raise ValueError(f"Activation function {config.hidden_act} not supported.")
 
     def forward(self, x):
-        return self.w2(LigerSiLUMulFunction.apply(self.w1(x), self.w3(x)))
+        return self.w2(_swiglu_dispatch(self.w1(x), self.w3(x)))
 
 
 class LigerExperts(nn.Module):
@@ -96,7 +112,7 @@ class LigerPhi3SwiGLUMLP(nn.Module):
     def forward(self, x):
         up_states = self.gate_up_proj(x)
         gate, up_states = up_states.chunk(2, dim=-1)
-        return self.down_proj(LigerSiLUMulFunction.apply(gate, up_states))
+        return self.down_proj(_swiglu_dispatch(gate, up_states))
 
 
 class LigerQwen3MoeSwiGLUMLP(nn.Module):
@@ -117,7 +133,7 @@ class LigerQwen3MoeSwiGLUMLP(nn.Module):
             raise ValueError(f"Activation function {config.hidden_act} not supported.")
 
     def forward(self, x):
-        return self.down_proj(LigerSiLUMulFunction.apply(self.gate_proj(x), self.up_proj(x)))
+        return self.down_proj(_swiglu_dispatch(self.gate_proj(x), self.up_proj(x)))
 
 
 class LigerHunyuanV1SwiGLUMLP(nn.Module):
@@ -134,7 +150,7 @@ class LigerHunyuanV1SwiGLUMLP(nn.Module):
             raise ValueError(f"Activation function {config.hidden_act} not supported.")
 
     def forward(self, x):
-        return self.down_proj(LigerSiLUMulFunction.apply(self.gate_proj(x), self.up_proj(x)))
+        return self.down_proj(_swiglu_dispatch(self.gate_proj(x), self.up_proj(x)))
 
 
 class LigerFalconH1SwiGLUMLP(nn.Module):
@@ -166,7 +182,7 @@ class LigerFalconH1SwiGLUMLP(nn.Module):
 
     def forward(self, x):
         return self.down_proj(
-            LigerSiLUMulFunction.apply(
+            _swiglu_dispatch(
                 self.gate_proj(x),
                 self.up_proj(x),
                 float(self.gate_multiplier),
