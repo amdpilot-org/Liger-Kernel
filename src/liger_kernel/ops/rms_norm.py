@@ -25,6 +25,14 @@ from liger_kernel.ops.utils import set_large_grf_mode
 from liger_kernel.ops.utils import torch_to_triton_dtype
 from liger_kernel.utils import is_npu_available
 
+# torch.distributed.tensor is a lazy submodule in torch 2.9+; import explicitly
+# so isinstance(X, torch.distributed.tensor.DTensor) works at runtime.
+try:
+    import torch.distributed.tensor  # noqa: F401
+    _DTensor = torch.distributed.tensor.DTensor
+except (ImportError, AttributeError):
+    _DTensor = None
+
 if compare_version("triton", operator.ge, "3.0.0") and not is_npu_available():
     try:
         # typical import path with dispatch available
@@ -609,7 +617,7 @@ class LigerRMSNormFunction(torch.autograd.Function):
         X: (B, T, H) or (BxT, H)
         W: (H,)
         """
-        if isinstance(X, torch.distributed.tensor.DTensor):
+        if _DTensor is not None and isinstance(X, _DTensor):
             # Input tensor is output of a tensor parallel module and
             # needs to be gathered to a local tensor to compute
             # RMSE layer norm on each TP worker.
@@ -642,7 +650,7 @@ class LigerRMSNormFunction(torch.autograd.Function):
             X, RSTD = ctx.saved_tensors
             W = None
 
-        if isinstance(dY, torch.distributed.tensor.DTensor):
+        if _DTensor is not None and isinstance(dY, _DTensor):
             # Gradients are output of a tensor parallel module and
             # needs to be gathered to a local tensor for computing RMSE layer.
             # TODO: support CP.
