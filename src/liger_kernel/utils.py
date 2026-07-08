@@ -55,6 +55,22 @@ def infer_device():
         return "cpu"
 
 
+def get_device_arch() -> str:
+    """Return the AMD GPU arch name (e.g. 'gfx950') on ROCm, '' otherwise.
+
+    Used to dispatch gfx9*-aware kernel paths (e.g. the MI355X layernorm arm).
+    On NVIDIA/CPU/XPU returns ''. The ROCm gcnArchName looks like
+    'gfx950:sramecc+:xnack-'; we return the leading 'gfxXXXX' token.
+    """
+    if not (hasattr(torch.version, "hip") and torch.version.hip is not None):
+        return ""
+    try:
+        name = torch.cuda.get_device_properties(0).gcnArchName
+        return name.split(":")[0]
+    except Exception:
+        return ""
+
+
 def is_npu_available() -> bool:
     """Detect Ascend NPU availability."""
     try:

@@ -2,6 +2,18 @@ import torch
 import torch.nn as nn
 
 from liger_kernel.ops import LigerLayerNormFunction
+from liger_kernel.utils import get_device_arch
+
+# gfx950 (MI355X) dispatch arm: use re-tuned Triton launch configs for AMD
+# wavefront-64. On every other device the default op is used unchanged.
+if get_device_arch().startswith("gfx950"):
+    from liger_kernel.transformers.amd.layernorm import (
+        LigerLayerNormFunction as _LigerLayerNormFunction,
+    )
+    from liger_kernel.transformers.amd.layernorm import LIGER_AMD_LAYERNORM_ACTIVE
+else:
+    _LigerLayerNormFunction = LigerLayerNormFunction
+    LIGER_AMD_LAYERNORM_ACTIVE = False
 
 
 class LigerLayerNorm(nn.Module):
@@ -18,7 +30,7 @@ class LigerLayerNorm(nn.Module):
         self.variance_epsilon = eps
 
     def forward(self, hidden_states):
-        return LigerLayerNormFunction.apply(hidden_states, self.weight, self.bias, self.variance_epsilon)
+        return _LigerLayerNormFunction.apply(hidden_states, self.weight, self.bias, self.variance_epsilon)
 
     def extra_repr(self):
         return f"{self.hidden_size}, eps={self.eps}"
