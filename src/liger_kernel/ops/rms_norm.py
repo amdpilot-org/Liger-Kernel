@@ -14,6 +14,7 @@ import math
 import operator
 
 import torch
+import torch.distributed.tensor  # noqa: F401  -- DTensor is referenced in forward/backward guards; the submodule is not auto-imported in torch>=2.7
 import triton
 import triton.language as tl
 
